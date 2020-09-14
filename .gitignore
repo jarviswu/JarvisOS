@@ -30,3 +30,13 @@
 *.exe
 *.out
 *.app
+
+*.bin
+*.lst
+*.bim
+*.img
+*.sys
+*.hrb
+*.map
+
+z_tools/
