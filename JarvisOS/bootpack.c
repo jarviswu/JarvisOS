@@ -1,7 +1,127 @@
-/* bootpack‚ÌƒƒCƒ“ */
+/* bootpackï¿½Ìƒï¿½ï¿½Cï¿½ï¿½ */
 
 #include "bootpack.h"
 #include <stdio.h>
+#define MEMMAN_FREES 4090  /*4090ä¸ªFREEINFOï¼Œå¤§å°çº¦ä¸º4090*8 = 32KB*/
+#define MEMMAN_ADDR 0x003c0000
+// å¯ç”¨ä¿¡æ¯
+struct FREEINFO { 
+	unsigned int addr, size;
+};
+
+// å†…å­˜ç®¡ç†
+struct MEMMAN {
+	int frees, maxfrees, lostsize, losts;
+	struct FREEINFO free[MEMMAN_FREES];
+};
+
+void memman_init(struct MEMMAN *man) {
+	// å¯ç”¨ä¿¡æ¯æ•°ç›®
+	man->frees = 0;
+	// freesçš„æœ€å¤§å€¼
+	man->maxfrees = 0;
+	// é‡Šæ”¾å¤±è´¥çš„å†…å­˜å¤§å°æ€»å’Œ
+	man->lostsize = 0;
+	// é‡Šæ”¾å¤±è´¥çš„æ¬¡æ•°
+	man->losts = 0;
+	return;
+}
+
+// å‰©ä½™å†…å­˜å¤§å°
+unsigned int memman_total(struct MEMMAN *man) {
+	unsigned int i, t = 0;
+	for (i = 0; i< man->frees; i++) {
+		t += man->free[i].size;
+	}
+	return t;
+}
+
+// åˆ†é…æŒ‡å®šå¤§å°çš„å†…å­˜
+unsigned int memman_alloc(struct MEMMAN *man, unsigned int size) {
+	unsigned int address = 0;
+	unsigned int i = 0;
+	for (i = 0; i < man->frees; ++i) {
+		// æ‰¾åˆ°å¤§å°åˆé€‚çš„å†…å­˜å—
+		if (man->free[i].size > size) {
+			address = man->free[i].addr;
+			man->free[i].size -= size;
+			man->free[i].addr += size;
+			if (man->free[i].size == 0) {
+				// è¯¥å—å¤§å°sizeä¸º0ï¼Œå¯ç”¨å¤§å°å‡ä¸€ï¼Œå¹¶ä¸”å°†æ•°ç»„åé¢çš„å†…å­˜æŒªåŠ¨åˆ°å‰é¢
+				--man->frees;
+				unsigned int j = i;
+				for (j = i; j < man->frees && j + 1 < man->frees; ++j) {
+					man->free[j] = man->free[j+1];
+				}
+			}
+
+			return address;
+		}
+	}
+	return address;
+}
+
+int memman_free(struct MEMMAN * man, unsigned int addr, unsigned int size) {
+    int i, j;
+    // ä¸ºä¾¿äºå½’çº³å†…å­˜ï¼Œå°†free[]æŒ‰ç…§addrçš„é¡ºåºæ’åˆ—
+    // æ‰€ä»¥ï¼Œå…ˆå†³å®šåº”è¯¥æ”¾åœ¨å“ªé‡Œ
+    for (i = 0; i < man->frees; i++) {
+        if (man->free[i].addr > addr) {
+            break;
+        }
+    }
+    // free[i - 1].addr < addr < free[i].addr
+    if (i > 0) {
+        // å‰é¢æœ‰å¯ç”¨å†…å­˜
+        if (man->free[i - 1].addr + man->free[i - 1].size == addr) {
+            // å¯ä»¥ä¸å‰é¢çš„å¯ç”¨å†…å­˜å½’çº³åˆ°ä¸€èµ·
+            man->free[i - 1].size += size;
+            if (i < man->frees) {
+                // åé¢ä¹Ÿæœ‰
+                if (addr + size == man->free[i].addr) {
+                    // ä¹Ÿå¯ä»¥ä¸åé¢çš„å¯ç”¨å†…å­˜å½’çº³åˆ°ä¸€èµ·
+                    man->free[i - 1].size += man->free[i].size;
+                    // man->free[i]åˆ é™¤ 
+                    // free[i]å˜æˆ0åå½’çº³åˆ°å‰é¢å»
+                    man->frees--;
+                    for (; i < man->frees; i++) {
+                        man->free[i] = man->free[i + 1]; // ç»“æ„ä½“èµ‹å€¼
+                    }
+                }
+            }
+            return 0; // æˆåŠŸå®Œæˆ
+		}
+    }
+    // ä¸èƒ½ä¸å‰é¢çš„å¯ç”¨ç©ºé—´å½’çº³åˆ°ä¸€èµ·
+    if (i < man->frees) {
+        // åé¢è¿˜æœ‰
+        if (addr + size == man->free[i].addr) {
+            // å¯ä»¥ä¸åé¢çš„å†…å®¹å½’çº³åˆ°ä¸€èµ·
+            man->free[i].addr = addr;
+            man->free[i].size += size;
+            return 0; 
+        }
+    }
+    // æ—¢ä¸èƒ½ä¸å‰é¢å½’çº³åˆ°ä¸€èµ·ï¼Œä¹Ÿä¸èƒ½ä¸åé¢å½’çº³åˆ°ä¸€èµ·
+    if (man->frees < MEMMAN_FREES) {
+        // free[i]ä¹‹åçš„ï¼Œå‘åç§»åŠ¨ï¼Œè…¾å‡ºä¸€ç‚¹å¯ç”¨ç©ºé—´
+        for (j = man->frees; j > i; j--) {
+            man->free[j] = man->free[j - 1];
+        }
+        man->frees++;
+        if (man->maxfrees < man->frees) {
+            man->maxfrees = man->frees; 
+        }
+        man->free[i].addr = addr;
+        man->free[i].size = size;
+        return 0; 
+    }
+    // ä¸èƒ½å¾€åç§»åŠ¨
+    man->losts++;
+    man->lostsize += size;
+	return -1;
+}
+
 
 unsigned int memtest(unsigned int start, unsigned int end);
 
@@ -11,30 +131,36 @@ void HariMain(void)
 	char s[40], mcursor[256], keybuf[32], mousebuf[128];
 	int mx, my, i;
 	struct MOUSE_DEC mdec;
+	unsigned int memtotal;
+	struct MEMMAN *memman = (struct MEMMAN *)MEMMAN_ADDR;
 
 	init_gdtidt();
 	init_pic();
-	io_sti(); /* IDT/PIC‚Ì‰Šú‰»‚ªI‚í‚Á‚½‚Ì‚ÅCPU‚ÌŠ„‚è‚İ‹Ö~‚ğ‰ğœ */
+	io_sti(); /* IDT/PICï¿½Ìï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Iï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì‚ï¿½CPUï¿½ÌŠï¿½ï¿½èï¿½İ‹Ö~ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 	fifo8_init(&keyfifo, 32, keybuf);
 	fifo8_init(&mousefifo, 128, mousebuf);
-	io_out8(PIC0_IMR, 0xf9); /* PIC1‚ÆƒL[ƒ{[ƒh‚ğ‹–‰Â(11111001) */
-	io_out8(PIC1_IMR, 0xef); /* ƒ}ƒEƒX‚ğ‹–‰Â(11101111) */
+	io_out8(PIC0_IMR, 0xf9); /* PIC1ï¿½ÆƒLï¿½[ï¿½{ï¿½[ï¿½hï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(11111001) */
+	io_out8(PIC1_IMR, 0xef); /* ï¿½}ï¿½Eï¿½Xï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(11101111) */
 
 	init_keyboard();
 	enable_mouse(&mdec);
 
 	init_palette();
 	init_screen8(binfo->vram, binfo->scrnx, binfo->scrny);
-	mx = (binfo->scrnx - 16) / 2; /* ‰æ–Ê’†‰›‚É‚È‚é‚æ‚¤‚ÉÀ•WŒvZ */
+	mx = (binfo->scrnx - 16) / 2; /* ï¿½ï¿½Ê’ï¿½ï¿½ï¿½ï¿½É‚È‚ï¿½æ‚¤ï¿½Éï¿½ï¿½Wï¿½vï¿½Z */
 	my = (binfo->scrny - 28 - 16) / 2;
 	init_mouse_cursor8(mcursor, COL8_008484);
 	putblock8_8(binfo->vram, binfo->scrnx, 16, 16, mx, my, mcursor, 16);
 	sprintf(s, "(%3d, %3d)", mx, my);
 	putfonts8_asc(binfo->vram, binfo->scrnx, 0, 0, COL8_FFFFFF, s);
 
-	i = memtest(0x00400000, 0xbfffffff) / (1024 * 1024);
-	sprintf(s, "memory %dMB", i);
-	putfonts8_asc(binfo->vram, binfo->scrnx, 0, 32, COL8_FFFFFF, s);
+	memtotal = memtest(0x00400000, 0xbfffffff);
+	memman_init(memman);
+	memman_free(memman, 0x00001000, 0x0009e000);
+	memman_free(memman, 0x00400000, memtotal - 0x00400000);
+	sprintf(s, "memory %dMB   free : %dKB",
+            memtotal / (1024 * 1024), memman_total(memman) / 1024);
+    putfonts8_asc(binfo->vram, binfo->scrnx, 0, 32, COL8_FFFFFF, s);
 
 	for (;;) {
 		io_cli();
@@ -51,7 +177,7 @@ void HariMain(void)
 				i = fifo8_get(&mousefifo);
 				io_sti();
 				if (mouse_decode(&mdec, i) != 0) {
-					/* ƒf[ƒ^‚ª3ƒoƒCƒg‘µ‚Á‚½‚Ì‚Å•\¦ */
+					/* ï¿½fï¿½[ï¿½^ï¿½ï¿½3ï¿½oï¿½Cï¿½gï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì‚Å•\ï¿½ï¿½ */
 					sprintf(s, "[lcr %4d %4d]", mdec.x, mdec.y);
 					if ((mdec.btn & 0x01) != 0) {
 						s[1] = 'L';
@@ -64,8 +190,8 @@ void HariMain(void)
 					}
 					boxfill8(binfo->vram, binfo->scrnx, COL8_008484, 32, 16, 32 + 15 * 8 - 1, 31);
 					putfonts8_asc(binfo->vram, binfo->scrnx, 32, 16, COL8_FFFFFF, s);
-					/* ƒ}ƒEƒXƒJ[ƒ\ƒ‹‚ÌˆÚ“® */
-					boxfill8(binfo->vram, binfo->scrnx, COL8_008484, mx, my, mx + 15, my + 15); /* ƒ}ƒEƒXÁ‚· */
+					/* ï¿½}ï¿½Eï¿½Xï¿½Jï¿½[ï¿½\ï¿½ï¿½ï¿½ÌˆÚ“ï¿½ */
+					boxfill8(binfo->vram, binfo->scrnx, COL8_008484, mx, my, mx + 15, my + 15); /* ï¿½}ï¿½Eï¿½Xï¿½ï¿½ï¿½ï¿½ */
 					mx += mdec.x;
 					my += mdec.y;
 					if (mx < 0) {
@@ -81,9 +207,9 @@ void HariMain(void)
 						my = binfo->scrny - 16;
 					}
 					sprintf(s, "(%3d, %3d)", mx, my);
-					boxfill8(binfo->vram, binfo->scrnx, COL8_008484, 0, 0, 79, 15); /* À•WÁ‚· */
-					putfonts8_asc(binfo->vram, binfo->scrnx, 0, 0, COL8_FFFFFF, s); /* À•W‘‚­ */
-					putblock8_8(binfo->vram, binfo->scrnx, 16, 16, mx, my, mcursor, 16); /* ƒ}ƒEƒX•`‚­ */
+					boxfill8(binfo->vram, binfo->scrnx, COL8_008484, 0, 0, 79, 15); /* ï¿½ï¿½ï¿½Wï¿½ï¿½ï¿½ï¿½ */
+					putfonts8_asc(binfo->vram, binfo->scrnx, 0, 0, COL8_FFFFFF, s); /* ï¿½ï¿½ï¿½Wï¿½ï¿½ï¿½ï¿½ */
+					putblock8_8(binfo->vram, binfo->scrnx, 16, 16, mx, my, mcursor, 16); /* ï¿½}ï¿½Eï¿½Xï¿½`ï¿½ï¿½ */
 				}
 			}
 		}
@@ -98,12 +224,12 @@ unsigned int memtest(unsigned int start, unsigned int end)
 	char flg486 = 0;
 	unsigned int eflg, cr0, i;
 
-	/* 386‚©A486ˆÈ~‚È‚Ì‚©‚ÌŠm”F */
+	/* 386ï¿½ï¿½ï¿½A486ï¿½È~ï¿½È‚Ì‚ï¿½ï¿½ÌŠmï¿½F */
 	eflg = io_load_eflags();
 	eflg |= EFLAGS_AC_BIT; /* AC-bit = 1 */
 	io_store_eflags(eflg);
 	eflg = io_load_eflags();
-	if ((eflg & EFLAGS_AC_BIT) != 0) { /* 386‚Å‚ÍAC=1‚É‚µ‚Ä‚à©“®‚Å0‚É–ß‚Á‚Ä‚µ‚Ü‚¤ */
+	if ((eflg & EFLAGS_AC_BIT) != 0) { /* 386ï¿½Å‚ï¿½AC=1ï¿½É‚ï¿½ï¿½Ä‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½0ï¿½É–ß‚ï¿½ï¿½Ä‚ï¿½ï¿½Ü‚ï¿½ */
 		flg486 = 1;
 	}
 	eflg &= ~EFLAGS_AC_BIT; /* AC-bit = 0 */
@@ -111,7 +237,7 @@ unsigned int memtest(unsigned int start, unsigned int end)
 
 	if (flg486 != 0) {
 		cr0 = load_cr0();
-		cr0 |= CR0_CACHE_DISABLE; /* ƒLƒƒƒbƒVƒ…‹Ö~ */
+		cr0 |= CR0_CACHE_DISABLE; /* ï¿½Lï¿½ï¿½ï¿½bï¿½Vï¿½ï¿½ï¿½Ö~ */
 		store_cr0(cr0);
 	}
 
@@ -119,7 +245,7 @@ unsigned int memtest(unsigned int start, unsigned int end)
 
 	if (flg486 != 0) {
 		cr0 = load_cr0();
-		cr0 &= ~CR0_CACHE_DISABLE; /* ƒLƒƒƒbƒVƒ…‹–‰Â */
+		cr0 &= ~CR0_CACHE_DISABLE; /* ï¿½Lï¿½ï¿½ï¿½bï¿½Vï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 		store_cr0(cr0);
 	}
 
